@@ -1,139 +1,394 @@
-5.Fifth day task
+18. 18 th day task
+    1. Docker Image Layering & Caching
 
-IoC Container Internals
-IoC (Inversion of Control) Container is the core of Spring. It manages the creation, configuration, and lifecycle of beans.
+Layering:
+Docker images are built in layers, each layer representing a step in the Dockerfile. Layers are immutable, so changes in one layer can invalidate all layers above it.
 
-How it works internally:
+Caching:
+Docker uses a build cache to avoid rebuilding unchanged layers. Example:
 
-BeanDefinition Loading:
+FROM python:3.11
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+COPY . .
+CMD ["python", "app.py"]
 
-Spring reads metadata about beans (@Component, @Service, XML, or Java Config).
+If requirements.txt hasn’t changed, Docker reuses the cached pip install layer.
 
-Stores metadata in a BeanDefinition registry.
+Modifying any line in the Dockerfile after a layer invalidates the cache for subsequent layers.
 
-Bean Instantiation:
+Best practices:
 
-The container decides when and how to create the bean based on scope and lazy initialization.
+Put frequently changing commands (like COPY . .) after commands that rarely change.
 
-Dependency Injection:
+Combine commands with && to reduce layers.
 
-Constructor, setter, or field injection is applied.
+2. Multi-Stage Docker Build Optimization
 
-BeanPostProcessors:
+Purpose: Reduce final image size by separating build-time and runtime dependencies.
 
-Spring allows modifying beans before and after initialization (postProcessBeforeInitialization, postProcessAfterInitialization).
+# Build stage
+FROM node:20 AS build
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+COPY . .
+RUN npm run build
 
-Aware Interfaces:
+# Production stage
+FROM nginx:alpine
+COPY --from=build /app/dist /usr/share/nginx/html
 
-Beans can implement interfaces like ApplicationContextAware or BeanNameAware to access container metadata.
+Only the necessary runtime files are included in the final image.
 
-Lifecycle callbacks:
+Reduces attack surface and improves deployment efficiency.
 
-@PostConstruct, InitializingBean.afterPropertiesSet(), DisposableBean.destroy(), or custom destroy-method.
+3. Docker Networking Modes
 
-2️. BeanFactory vs ApplicationContext Feature BeanFactory ApplicationContext Container type Basic IoC container Advanced IoC container Bean loading Lazy by default Eager loading (singleton beans at startup) Features Instantiation & DI only Internationalization, event publishing, AOP, etc. Common use Lightweight apps, memory-sensitive Web apps, full Spring features Interface examples BeanFactory, XmlBeanFactory ApplicationContext, AnnotationConfigApplicationContext
+Docker containers can communicate in different ways:
 
-Takeaway:
+Bridge (default) – Containers on the same host can communicate via internal network.
 
-ApplicationContext extends BeanFactory with more enterprise-level capabilities.
+Host – Container shares the host network stack. Useful for low-latency apps.
 
-In almost all modern Spring apps, we use ApplicationContext.
+Overlay – Multi-host networking, often used with Docker Swarm/Kubernetes.
 
-3️. Bean Scopes: request/session in web apps
-
-Spring supports different bean scopes:
-
-Scope Description singleton One instance per Spring container (default) prototype A new instance every time requested request One bean per HTTP request (web apps) session One bean per HTTP session application One bean per ServletContext websocket One bean per WebSocket session
-
-Example:
-
-@Service @Scope("request") public class RequestScopedService { }
-
-A new RequestScopedService is created for each HTTP request.
-
-4️. Bean Lifecycle
-
-Steps from creation to destruction:
-
-Instantiation
-
-Bean object created (constructor or factory method).
-
-Dependency Injection
-
-Fields, setters, or constructor dependencies are injected.
-
-BeanNameAware / BeanFactoryAware / ApplicationContextAware
-
-Bean gets metadata from container if implemented.
-
-BeanPostProcessor - before initialization
-
-postProcessBeforeInitialization is called.
-
-Initialization
-
-@PostConstruct or afterPropertiesSet() executes.
-
-BeanPostProcessor - after initialization
-
-postProcessAfterInitialization is called.
-
-Ready to use
-
-Bean is now fully managed by Spring.
-
-Destruction
-
-Singleton beans: @PreDestroy or DisposableBean.destroy() executed when container shuts down.
-
-Prototype beans are not managed after creation.
-
-5️. Circular Dependency Solving in Spring
-
-A circular dependency occurs when Bean A depends on Bean B, and Bean B depends on Bean A.
-
-How Spring handles it:
-
-Setter Injection (field/setter)
-
-Spring can resolve circular dependencies automatically by creating a proxy or early reference.
-
-Constructor Injection
-
-Circular dependencies cannot be resolved by default → will throw BeanCurrentlyInCreationException.
-
-Workaround: use @Lazy on one dependency to delay instantiation.
+Macvlan – Assigns a unique MAC address to the container, making it appear as a physical device on the network.
 
 Example:
 
-@Service public class A { @Autowired private B b; }
+docker network create --driver bridge mynet
+docker run --network=mynet mycontainer
+4. Environment Variables & Secrets Security
 
-@Service public class B { @Autowired @Lazy private A a; }
+Environment Variables: Passed via -e or --env-file. Easy but visible in docker inspect.
 
-@Lazy allows Spring to break the circular dependency.
+Secrets Management: For sensitive data (DB passwords, API keys), use:
 
-6️. @ComponentScan Deep Behavior
+Docker Secrets (Swarm)
 
-@ComponentScan is responsible for scanning packages to find beans (@Component, @Service, @Repository, @Controller).
+Kubernetes Secrets
 
-Important points:
+External secret managers like HashiCorp Vault
 
-Base package scanning
+Example (Docker Secret):
 
-@SpringBootApplication already includes @ComponentScan on the same package and subpackages.
+echo "mypassword" | docker secret create db_password -
+docker service create --name myapp --secret db_password myimage
 
-Filters
+Inside the container, secrets appear in /run/secrets/db_password, not as environment variables.
 
-Can include/exclude certain classes using includeFilters or excludeFilters.
+5. Volume Persistence for MySQL
 
-Deep scanning
+Containers are ephemeral; data must persist via volumes.
 
-Spring recursively scans all subpackages of the base package.
+docker volume create mysql_data
+docker run -d \
+  --name mysql \
+  -e MYSQL_ROOT_PASSWORD=rootpass \
+  -v mysql_data:/var/lib/mysql \
+  mysql:8
+
+Best practices:
+
+Use named volumes (mysql_data) instead of host paths for portability.
+
+Backup volumes regularly.
+
+6. Container Orchestration Basics
+
+Why orchestration: Manage multiple containers, scaling, networking, and high availability.
+
+Docker Swarm:
+
+Native to Docker.
+
+Simple to set up (docker swarm init).
+
+Handles load balancing, scaling, and secrets.
+
+19. 19 th day task
+    . Reverse Proxy Benefits (NGINX)
+
+A reverse proxy sits between users and your backend services.
+
+ Key Benefits:
+
+Security
+Hides internal services (e.g., your app runs on port 5000, but users only see port 80/443).
+
+Load Balancing
+Distributes traffic across multiple backend servers.
+
+SSL Termination
+Handles HTTPS so your app doesn’t need to.
+
+Caching
+Speeds up responses for static or repeated requests.
+
+Routing
+Directs requests:
+
+/api → backend service
+
+/ → frontend
 
 Example:
+Client → NGINX → Node.js / Python / Java app
+2. SSL Termination using Let's Encrypt
 
-@SpringBootApplication @ComponentScan(basePackages = {"com.medical.service", "com.medical.controller"}) public class MedicalApplication { }
+SSL termination means HTTPS is handled at the proxy level.
 
-Only scans specified packages.
+ Why it matters:
 
+Encrypts user data (HTTPS)
+
+Improves trust (no browser warnings)
+
+Required for modern apps (cookies, APIs, etc.)
+
+How it works:
+
+Use Certbot to get free certificates from Let’s Encrypt
+
+Configure NGINX:
+
+Port 80 → redirect to 443
+
+Port 443 → uses SSL cert
+
+Auto-renewal:
+
+Let’s Encrypt certs expire every 90 days, so auto-renew via cron/systemd timer.
+
+3. Firewall Rules & Port Hardening
+Goal:
+
+Expose only what’s necessary.
+
+ Best Practices:
+
+Allow:
+
+22 → SSH (restrict to your IP ideally)
+
+80 → HTTP
+
+443 → HTTPS
+
+Block everything else
+
+ Tools:
+
+Linux firewall: ufw, iptables, or firewalld
+
+Extra Hardening:
+
+Disable root login over SSH
+
+Use SSH keys instead of passwords
+
+Change default SSH port (optional)
+
+Principle:
+
+“Deny by default, allow only what’s required”
+
+4. Using systemd to Manage Backend Service
+
+systemd is used to run your app as a background service.
+
+Why use systemd:
+
+Auto-start on boot
+
+Restart on failure
+
+Centralized logging (journalctl)
+
+Easy control (start/stop/restart)
+
+📄 Example service file:
+/etc/systemd/system/myapp.service
+
+[Unit]
+Description=My Backend App
+After=network.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/var/www/app
+ExecStart=/usr/bin/node server.js
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+🔧 Commands:
+sudo systemctl daemon-reexec
+sudo systemctl enable myapp
+sudo systemctl start myapp
+sudo systemctl status myapp
+5. Zero Downtime Deployment Strategies
+
+Goal: Deploy updates without users noticing interruptions.
+
+Common Strategies:
+1. Rolling Deployment
+
+Update servers one by one
+
+No full outage
+
+2. Blue-Green Deployment
+
+Two environments:
+
+Blue (current)
+
+Green (new)
+
+Switch traffic instantly
+
+3. Canary Deployment
+
+Release to small % of users first
+
+Monitor before full rollout
+
+4. Process Reload (NGINX + app)
+
+Restart app gracefully:
+
+pm2 reload all
+
+or systemd restart with minimal disruption
+
+5. Load Balancer Approach
+
+Remove instance → update → re-add
+
+🔗 How Everything Fits Together
+
+Typical production flow:
+
+User (HTTPS)
+   ↓
+NGINX (Reverse Proxy + SSL Termination)
+   ↓
+Backend Service (systemd managed)
+   ↓
+Database
+
+20.20 th day task
+
+1️. Refactoring Strategies (SOLID, DRY, KISS)
+
+Purpose: Make your code easier to maintain, extend, and test.
+
+SOLID principles:
+S – Single Responsibility: Each class should have one reason to change.
+O – Open/Closed: Classes should be open for extension, closed for modification.
+L – Liskov Substitution: Subclasses should replace base classes without breaking behavior.
+I – Interface Segregation: Use small, focused interfaces instead of one big interface.
+D – Dependency Inversion: Depend on abstractions, not concrete classes.
+
+Example in Spring Boot:
+
+// BAD: Single class doing everything
+public class OrderService {
+    public void fetchOrders() { ... }
+    public void saveOrders() { ... }
+    public void notifyUser() { ... }
+}
+
+// GOOD: Separate responsibilities
+@Service
+public class OrderFetcher { ... }
+
+@Service
+public class OrderSaver { ... }
+
+@Service
+public class NotificationService { ... }
+DRY (Don’t Repeat Yourself):
+Avoid duplicate code. Extract reusable methods or utilities.
+KISS (Keep It Simple, Stupid):
+Avoid overengineering. Simple and readable code is better than clever but confusing code.
+2️. SQL Performance Tuning for Slow Queries
+
+Purpose: Make database operations faster.
+
+Use indexes on frequently queried columns:
+CREATE INDEX idx_orders_user_id ON orders(user_id);
+Avoid SELECT *; specify only the columns you need:
+SELECT id, amount FROM orders WHERE user_id = ?;
+Use query analysis tools:
+MySQL: EXPLAIN SELECT ...
+Workbench → Query Performance Analyzer
+Optimize joins, batch inserts, and caching.
+3️. Logging Improvements (Structured Logging)
+
+Purpose: Make logs easier to read, analyze, and monitor in production.
+
+Use Logback or Log4j2 JSON format:
+<encoder class="net.logstash.logback.encoder.LoggingEventCompositeJsonEncoder">
+    <providers>
+        <timestamp />
+        <loggerName />
+        <logLevel />
+        <threadName />
+        <message />
+    </providers>
+</encoder>
+Include request IDs, user IDs, and service names.
+Avoid printing sensitive data in logs.
+4️. Exception Consistency & Documentation
+
+Purpose: Make error handling predictable and easy to debug.
+
+Create custom exceptions:
+public class OrderNotFoundException extends RuntimeException {
+    public OrderNotFoundException(String message) { super(message); }
+}
+Use @ControllerAdvice for global exception handling:
+@RestControllerAdvice
+public class GlobalExceptionHandler {
+    @ExceptionHandler(OrderNotFoundException.class)
+    public ResponseEntity<String> handleOrderNotFound(OrderNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ex.getMessage());
+    }
+}
+Document possible exceptions in your API or README.
+5️.API Change Management
+
+Purpose: Safely change APIs without breaking clients.
+
+Use versioning:
+GET /api/v1/orders
+GET /api/v2/orders
+Maintain backward compatibility.
+Communicate changes in README or API documentation (Swagger/OpenAPI).
+6️. Preparing Project for Production
+
+Checklist:
+
+ Externalize configuration (application.properties → environment variables)
+ Enable connection pooling (HikariCP)
+ Enable structured logging & monitoring
+ Secure endpoints (Spring Security, JWT, HTTPS)
+ Validate DB migrations & seed data
+ Build fat jar for deployment:
+mvn clean package
+
+
+
+
+
+
+
+
+
+If you want, I can also create a diagram showing Docker layers, multi-stage builds, and volumes for a visual understanding — it makes these concepts click instantly.
+
+Do you want me to make that diagram?
